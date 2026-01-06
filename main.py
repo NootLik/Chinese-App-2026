@@ -545,5 +545,6 @@ class ChineseLearningApp(tk.Tk):
 
 if __name__ == "__main__":
     _load_dotenv(Path(".env"))
+    _load_dotenv(Path("API_KEY.env"))
     app = ChineseLearningApp()
     app.mainloop()
