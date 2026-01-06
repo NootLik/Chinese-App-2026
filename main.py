@@ -4,13 +4,14 @@ import tkinter as tk
 from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
 class VocabularyList:
     name: str
-    words: list[str] = field(default_factory=list)
-    tones: dict[str, str] = field(default_factory=dict)
+    words: List[str] = field(default_factory=list)
+    tones: Dict[str, str] = field(default_factory=dict)
     color: str = "#2e7d32"
 
 
@@ -20,7 +21,7 @@ class ChineseLearningApp(tk.Tk):
         self.title("Chinese Learning App")
         self.geometry("980x720")
 
-        self.vocab_lists: list[VocabularyList] = []
+        self.vocab_lists: List[VocabularyList] = []
         self.colors = ["#2e7d32", "#1565c0", "#6a1b9a", "#ef6c00", "#ad1457"]
 
         self._build_layout()
@@ -136,8 +137,8 @@ class ChineseLearningApp(tk.Tk):
         self.quiz_feedback = ttk.Label(frame, text="")
         self.quiz_feedback.pack(pady=10)
 
-        self.current_quiz_word: str | None = None
-        self.current_quiz_tone: str | None = None
+        self.current_quiz_word: Optional[str] = None
+        self.current_quiz_tone: Optional[str] = None
 
     def load_csv(self) -> None:
         filenames = filedialog.askopenfilenames(
@@ -159,8 +160,8 @@ class ChineseLearningApp(tk.Tk):
         self._refresh_legend()
 
     def _read_vocab_file(self, path: Path, index: int) -> VocabularyList:
-        words: list[str] = []
-        tones: dict[str, str] = {}
+        words: List[str] = []
+        tones: Dict[str, str] = {}
         with path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             if reader.fieldnames is None:
@@ -185,7 +186,7 @@ class ChineseLearningApp(tk.Tk):
         return VocabularyList(name=path.stem, words=words, tones=tones, color=color)
 
     @staticmethod
-    def _match_field(fieldnames: list[str], candidates: list[str]) -> str:
+    def _match_field(fieldnames: List[str], candidates: List[str]) -> str:
         lowered = {field.lower(): field for field in fieldnames}
         for candidate in candidates:
             if candidate in lowered:
@@ -243,7 +244,7 @@ class ChineseLearningApp(tk.Tk):
             return
 
         sentence_count = max(1, int(self.sentence_count.get()))
-        generated: list[str] = []
+        generated: List[str] = []
         for _ in range(sentence_count):
             template = random.choice(grammar_lines)
             sentence = self._fill_template(template, vocab_words)
@@ -254,21 +255,21 @@ class ChineseLearningApp(tk.Tk):
         self.sentences_output.insert(tk.END, "\n".join(generated))
         self.sentences_output.config(state=tk.DISABLED)
 
-    def _fill_template(self, template: str, vocab_words: list[str]) -> str:
+    def _fill_template(self, template: str, vocab_words: List[str]) -> str:
         if "{word}" not in template:
             return f"{template} {random.choice(vocab_words)}"
         while "{word}" in template:
             template = template.replace("{word}", random.choice(vocab_words), 1)
         return template
 
-    def _all_words(self) -> list[str]:
-        words: list[str] = []
+    def _all_words(self) -> List[str]:
+        words: List[str] = []
         for vocab in self.vocab_lists:
             words.extend(vocab.words)
         return words
 
     def new_quiz(self) -> None:
-        tone_entries: list[tuple[str, str]] = []
+        tone_entries: List[Tuple[str, str]] = []
         for vocab in self.vocab_lists:
             for word, tone in vocab.tones.items():
                 tone_entries.append((word, tone))
