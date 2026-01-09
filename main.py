@@ -58,11 +58,37 @@ class ChineseLearningApp(tk.Tk):
         self.colors = ["#2e7d32", "#1565c0", "#6a1b9a", "#ef6c00", "#ad1457"]
         self.highlight_font_size = tk.IntVar(value=14)
         self.sentence_font_size = tk.IntVar(value=14)
-        self.highlight_font = tkfont.Font(family="Helvetica", size=self.highlight_font_size.get())
-        self.sentence_font = tkfont.Font(family="Helvetica", size=self.sentence_font_size.get())
+        self.chinese_font_family = self._pick_chinese_font_family()
+        self.highlight_font = tkfont.Font(
+            family=self.chinese_font_family, size=self.highlight_font_size.get()
+        )
+        self.sentence_font = tkfont.Font(
+            family=self.chinese_font_family, size=self.sentence_font_size.get()
+        )
         self.generated_sentences: List[str] = []
 
         self._build_layout()
+
+    def _pick_chinese_font_family(self) -> str:
+        candidates = [
+            "Noto Serif CJK TC",
+            "Noto Serif CJK SC",
+            "Source Han Serif TC",
+            "Source Han Serif SC",
+            "Songti SC",
+            "STSong",
+            "PMingLiU",
+            "MingLiU",
+            "SimSun",
+            "Noto Serif",
+            "Times New Roman",
+            "Helvetica",
+        ]
+        available = set(tkfont.families())
+        for candidate in candidates:
+            if candidate in available:
+                return candidate
+        return "Helvetica"
 
     def _build_layout(self) -> None:
         header = ttk.Frame(self)
@@ -112,7 +138,16 @@ class ChineseLearningApp(tk.Tk):
         size_selector.pack(side=tk.LEFT)
         size_selector.bind("<<ComboboxSelected>>", self._update_highlight_font)
 
-        self.highlight_text = tk.Text(frame, height=20, wrap=tk.WORD, font=self.highlight_font)
+        self.highlight_text = tk.Text(
+            frame,
+            height=20,
+            wrap=tk.WORD,
+            font=self.highlight_font,
+            spacing1=4,
+            spacing3=6,
+            padx=8,
+            pady=6,
+        )
         self.highlight_text.pack(fill=tk.BOTH, expand=True, pady=10)
 
         ttk.Button(frame, text="Highlight Vocabulary", command=self.highlight_vocab).pack(
@@ -145,7 +180,17 @@ class ChineseLearningApp(tk.Tk):
         size_selector.pack(side=tk.LEFT)
         size_selector.bind("<<ComboboxSelected>>", self._update_sentence_font)
 
-        grammar_box = tk.Text(frame, height=8, wrap=tk.WORD, state=tk.DISABLED)
+        grammar_box = tk.Text(
+            frame,
+            height=8,
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            font=(self.chinese_font_family, 12),
+            spacing1=2,
+            spacing3=4,
+            padx=6,
+            pady=4,
+        )
         grammar_box.pack(fill=tk.X, pady=6)
         grammar_box.config(state=tk.NORMAL)
         grammar_box.insert(tk.END, "\n".join(f"- {form}" for form in GRAMMAR_FORMS))
@@ -182,7 +227,15 @@ class ChineseLearningApp(tk.Tk):
         )
 
         self.sentences_output = tk.Text(
-            frame, height=15, wrap=tk.WORD, state=tk.DISABLED, font=self.sentence_font
+            frame,
+            height=15,
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            font=self.sentence_font,
+            spacing1=6,
+            spacing3=8,
+            padx=8,
+            pady=6,
         )
         self.sentences_output.pack(fill=tk.BOTH, expand=True, pady=10)
 
@@ -212,7 +265,11 @@ class ChineseLearningApp(tk.Tk):
         ttk.Button(frame, text="New Quiz", command=self.new_quiz).pack(anchor=tk.E, pady=6)
 
         self.quiz_sentence = ttk.Label(
-            frame, text="Load vocabulary lists with tones to begin.", font=("Helvetica", 24)
+            frame,
+            text="Load vocabulary lists with tones to begin.",
+            font=(self.chinese_font_family, 24),
+            wraplength=860,
+            justify=tk.CENTER,
         )
         self.quiz_sentence.pack(fill=tk.X, pady=20)
 
