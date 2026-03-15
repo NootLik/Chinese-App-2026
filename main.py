@@ -1,4 +1,5 @@
 import csv
+import importlib
 import os
 import platform
 import random
@@ -305,16 +306,22 @@ class ChineseLearningApp(tk.Tk):
         if not filenames:
             return
 
+        loaded_paths: List[Path] = []
         for index, filename in enumerate(filenames):
+            file_path = Path(filename)
             try:
-                vocab_list = self._read_vocab_file(Path(filename), index)
+                vocab_list = self._read_vocab_file(file_path, index)
             except Exception as exc:  # noqa: BLE001 - display error to user
                 messagebox.showerror("CSV Error", f"Failed to load {filename}: {exc}")
                 continue
             self.vocab_lists.append(vocab_list)
+            loaded_paths.append(file_path)
 
         self._refresh_list_summary()
         self._refresh_legend()
+
+        if loaded_paths:
+            self._prompt_enrich_loaded_csvs(loaded_paths)
 
     def _read_vocab_file(self, path: Path, index: int) -> VocabularyList:
         words: List[str] = []
@@ -379,6 +386,140 @@ class ChineseLearningApp(tk.Tk):
     def _normalize_tone_input(value: str) -> str:
         tones = re.findall(r"[1-5]", value)
         return "-".join(tones)
+
+
+    def _prompt_enrich_loaded_csvs(self, paths: List[Path]) -> None:
+        should_enrich = messagebox.askyesno(
+            "Add Pinyin and Tones",
+            "Do you want to fill missing Pinyin and TonePattern values in the loaded CSV files?",
+        )
+        if not should_enrich:
+            return
+
+        converter = self._load_pypinyin_converter()
+        if converter is None:
+            messagebox.showwarning(
+                "Missing Dependency",
+                "Install pypinyin to auto-fill Pinyin and TonePattern values.",
+            )
+            return
+
+        updated_files = 0
+        total_missing_words = 0
+        for path in paths:
+            try:
+                file_updated, file_missing_words = self._enrich_csv_file(path, converter)
+                if file_updated:
+                    updated_files += 1
+                total_missing_words += file_missing_words
+            except Exception as exc:  # noqa: BLE001 - show user-facing error
+                messagebox.showwarning("CSV Enrichment Error", f"{path.name}: {exc}")
+
+        messagebox.showinfo(
+            "CSV Enrichment Summary",
+            (
+                f"Updated {updated_files} file(s). "
+                f"Words still missing Pinyin/TonePattern: {total_missing_words}."
+            ),
+        )
+
+    def _enrich_csv_file(self, path: Path, converter: dict) -> Tuple[bool, int]:
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None:
+                raise ValueError("CSV must include headers")
+            fieldnames = list(reader.fieldnames)
+            rows = list(reader)
+
+        word_field = self._match_field(
+            fieldnames, ["simplified", "word", "vocab", "character", "traditional"], True
+        )
+        if not word_field:
+            raise ValueError("Could not detect the word column")
+
+        pinyin_field = self._match_field(fieldnames, ["pinyin", "pronunciation"], False)
+        tone_field = self._match_field(
+            fieldnames, ["tonepattern", "tone_pattern", "tone", "tones"], False
+        )
+
+        if not pinyin_field:
+            pinyin_field = "Pinyin"
+            fieldnames.append(pinyin_field)
+        if not tone_field:
+            tone_field = "TonePattern"
+            fieldnames.append(tone_field)
+
+        missing_words: List[str] = []
+        for row in rows:
+            word = (row.get(word_field) or "").strip()
+            if not word:
+                continue
+            has_pinyin = bool((row.get(pinyin_field) or "").strip())
+            has_tone = bool((row.get(tone_field) or "").strip())
+            if not has_pinyin or not has_tone:
+                missing_words.append(word)
+
+        if not missing_words:
+            return False, 0
+
+        annotations, unresolved_words = self._annotate_words_with_pypinyin(missing_words, converter)
+
+        updated_any = False
+        for row in rows:
+            word = (row.get(word_field) or "").strip()
+            if not word or word not in annotations:
+                continue
+            annotation = annotations[word]
+            if not (row.get(pinyin_field) or "").strip() and annotation.get("pinyin"):
+                row[pinyin_field] = annotation["pinyin"]
+                updated_any = True
+            if not (row.get(tone_field) or "").strip() and annotation.get("tone_pattern"):
+                row[tone_field] = annotation["tone_pattern"]
+                updated_any = True
+
+        if updated_any:
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        return updated_any, len(unresolved_words)
+
+    @staticmethod
+    def _load_pypinyin_converter() -> Optional[dict]:
+        if importlib.util.find_spec("pypinyin") is None:
+            return None
+        pypinyin_module = importlib.import_module("pypinyin")
+        return {
+            "pinyin": pypinyin_module.pinyin,
+            "style": pypinyin_module.Style.TONE3,
+        }
+
+    def _annotate_words_with_pypinyin(
+        self, words: List[str], converter: dict
+    ) -> Tuple[Dict[str, Dict[str, str]], List[str]]:
+        annotations: Dict[str, Dict[str, str]] = {}
+        unresolved_words: List[str] = []
+
+        pinyin_func = converter["pinyin"]
+        tone_style = converter["style"]
+
+        for word in sorted(set(words)):
+            syllables_nested = pinyin_func(word, style=tone_style, heteronym=False, strict=False)
+            syllables = [syllable_list[0].lower() for syllable_list in syllables_nested if syllable_list]
+            numbered = [syllable for syllable in syllables if re.search(r"[1-5]", syllable)]
+            if not numbered:
+                unresolved_words.append(word)
+                continue
+            pinyin_value = " ".join(numbered)
+            tone_pattern = self._derive_tone_pattern_from_pinyin(pinyin_value)
+            tone_pattern = self._normalize_tone_input(tone_pattern)
+            if not tone_pattern:
+                unresolved_words.append(word)
+                continue
+            annotations[word] = {"pinyin": pinyin_value, "tone_pattern": tone_pattern}
+
+        return annotations, unresolved_words
 
     def _refresh_list_summary(self) -> None:
         if not self.vocab_lists:

@@ -34,3 +34,28 @@ Simplified,Traditional,Status,Pinyin,TonePattern
 4. **Dual pinyin styles**:
    - `PinyinNumbered` (`niu3 qu1`) for parsing.
    - `PinyinMarked` (`niǔ qū`) for display only.
+
+
+## Auto-fill workflow after loading
+When you load CSV files, the app now prompts:
+- **"Add Pinyin and Tones"**
+
+If you click **Yes**, it will iterate through each loaded file and:
+1. Read rows from your existing format (`Simplified`, `Traditional`, `Status`, etc.).
+2. Add missing columns `Pinyin` and `TonePattern` when needed.
+3. Find rows missing either pinyin or tone pattern.
+4. Use local `pypinyin` conversion to fill numbered pinyin + tone pattern for missing words.
+5. Write the updated CSV back to disk.
+
+Example output rows after enrichment:
+```csv
+Simplified,Traditional,Status,Pinyin,TonePattern
+扭曲,扭曲,strong,niu3 qu1,3-1
+多样,多樣,strong,duo1 yang4,1-4
+```
+
+Notes:
+- Requires `pypinyin` installed for auto-fill (no LLM/API call needed).
+- Existing `Pinyin` / `TonePattern` values are preserved (not overwritten).
+
+- Polyphonic note: pypinyin chooses a reading using its built-in phrase dictionary; with `heteronym=False` the app keeps one reading per character/word.
