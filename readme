@@ -1,1 +1,36 @@
-test
+# Chinese Learning App: vocabulary CSV format
+
+## Recommended columns
+Use UTF-8 CSV (or TSV saved as `.csv`) with headers:
+
+- `Simplified` (or `word`/`vocab`/`character`) → the Chinese word used by the app.
+- `Traditional` (optional) → reference only.
+- `Status` (optional) → reference only.
+- `Pinyin` (recommended) → include tone numbers per syllable (for example `niu3 qu1`).
+- `TonePattern` (optional) → explicit tone pattern used by quiz (for example `3-1`).
+
+The app will now:
+- Read words from `Simplified` automatically.
+- Read tone from `TonePattern`/`tone` if present.
+- Derive tone pattern from `Pinyin` when explicit tone is missing.
+
+## Example (matches your current list)
+```csv
+Simplified,Traditional,Status,Pinyin,TonePattern
+扭曲,扭曲,strong,niu3 qu1,3-1
+多样,多樣,strong,duo1 yang4,1-4
+排名,排名,strong,pai2 ming2,2-2
+衣料,衣料,strong,yi1 liao4,1-4
+头盔,頭盔,strong,tou2 kui1,2-1
+胳肢窝,胳肢窩,strong,ge1 zhi5 wo1,1-5-1
+```
+
+## Brainstormed alternatives for tone + pinyin
+1. **Single Pinyin column only** (simplest): keep `Pinyin` with numeric tones; app derives tone pattern.
+2. **Pinyin + TonePattern** (most robust): keep both so quiz logic is explicit and human-readable.
+3. **Per-character columns** (best for advanced drills):
+   - `Char1Pinyin`, `Char2Pinyin`, `Char3Pinyin` ...
+   - Allows character-level quizzes later.
+4. **Dual pinyin styles**:
+   - `PinyinNumbered` (`niu3 qu1`) for parsing.
+   - `PinyinMarked` (`niǔ qū`) for display only.
