@@ -1,7 +1,9 @@
 import csv
+import importlib
 import os
 import platform
 import random
+import re
 import subprocess
 import tempfile
 import tkinter as tk
@@ -25,6 +27,8 @@ GRAMMAR_FORMS = [
     "跟 B 比起来 + (更 / 比较) + Adjective / Phrase",
 ]
 
+DEFAULT_VOCAB_DIR = r"C:\Users\just_\OneDrive\Documents\Education\Chinese"
+
 
 def _load_dotenv(path: Path) -> None:
     if not path.is_file():
@@ -45,6 +49,7 @@ class VocabularyList:
     name: str
     words: List[str] = field(default_factory=list)
     tones: Dict[str, str] = field(default_factory=dict)
+    pinyins: Dict[str, str] = field(default_factory=dict)
     color: str = "#2e7d32"
 
 
@@ -256,9 +261,9 @@ class ChineseLearningApp(tk.Tk):
         self.notebook.add(frame, text="Tone Quiz")
 
         instructions = (
-            "Generate a sentence from your vocabulary lists, then choose the correct tone "
-            "for the highlighted target word. Tones should be provided in your CSV files "
-            "with a column named 'tone'."
+            "Generate a sentence from your vocabulary lists, then enter the tone pattern "
+            "for the highlighted target word (for example: 3-1 for 扭曲). "
+            "Tones can come from a tone column or be derived from pinyin with tone numbers."
         )
         ttk.Label(frame, text=instructions, wraplength=900).pack(anchor=tk.W)
 
@@ -275,17 +280,11 @@ class ChineseLearningApp(tk.Tk):
 
         selection_frame = ttk.Frame(frame)
         selection_frame.pack()
-        ttk.Label(selection_frame, text="Select tone:").pack(side=tk.LEFT)
+        ttk.Label(selection_frame, text="Enter tone pattern:").pack(side=tk.LEFT)
 
-        self.tone_choice = tk.StringVar(value="1")
-        self.tone_dropdown = ttk.Combobox(
-            selection_frame,
-            textvariable=self.tone_choice,
-            values=["1", "2", "3", "4", "5"],
-            state="readonly",
-            width=5,
-        )
-        self.tone_dropdown.pack(side=tk.LEFT, padx=6)
+        self.tone_choice = tk.StringVar(value="")
+        self.tone_entry = ttk.Entry(selection_frame, textvariable=self.tone_choice, width=12)
+        self.tone_entry.pack(side=tk.LEFT, padx=6)
 
         ttk.Button(selection_frame, text="Submit", command=self.check_answer).pack(
             side=tk.LEFT, padx=6
@@ -296,59 +295,231 @@ class ChineseLearningApp(tk.Tk):
 
         self.current_quiz_word: Optional[str] = None
         self.current_quiz_tone: Optional[str] = None
+        self.current_quiz_pinyin: Optional[str] = None
 
     def load_csv(self) -> None:
         filenames = filedialog.askopenfilenames(
             title="Select vocabulary CSV files",
             filetypes=[("CSV files", "*.csv"), ("All files", "*")],
+            initialdir=DEFAULT_VOCAB_DIR,
         )
         if not filenames:
             return
 
+        loaded_paths: List[Path] = []
         for index, filename in enumerate(filenames):
+            file_path = Path(filename)
             try:
-                vocab_list = self._read_vocab_file(Path(filename), index)
+                vocab_list = self._read_vocab_file(file_path, index)
             except Exception as exc:  # noqa: BLE001 - display error to user
                 messagebox.showerror("CSV Error", f"Failed to load {filename}: {exc}")
                 continue
             self.vocab_lists.append(vocab_list)
+            loaded_paths.append(file_path)
 
         self._refresh_list_summary()
         self._refresh_legend()
 
+        if loaded_paths:
+            self._prompt_enrich_loaded_csvs(loaded_paths)
+
     def _read_vocab_file(self, path: Path, index: int) -> VocabularyList:
         words: List[str] = []
         tones: Dict[str, str] = {}
+        pinyins: Dict[str, str] = {}
         with path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             if reader.fieldnames is None:
                 raise ValueError("CSV must include headers")
-            word_field = self._match_field(reader.fieldnames, ["word", "vocab", "character"])
-            tone_field = self._match_field(reader.fieldnames, ["tone", "tones"])
+            word_field = self._match_field(
+                reader.fieldnames,
+                ["word", "vocab", "character", "simplified", "traditional"],
+                fallback_to_first=True,
+            )
+            tone_field = self._match_field(
+                reader.fieldnames, ["tone", "tones", "tone_pattern"], fallback_to_first=False
+            )
+            pinyin_field = self._match_field(
+                reader.fieldnames, ["pinyin", "pronunciation"], fallback_to_first=False
+            )
 
             for row in reader:
-                word = (row.get(word_field) or "").strip()
+                word = (row.get(word_field) or "").strip() if word_field else ""
                 if not word:
                     continue
                 words.append(word)
-                if tone_field:
-                    tone = (row.get(tone_field) or "").strip()
-                    if tone:
-                        tones[word] = tone
+
+                pinyin = (row.get(pinyin_field) or "").strip() if pinyin_field else ""
+                if pinyin:
+                    pinyins[word] = pinyin
+
+                tone = (row.get(tone_field) or "").strip() if tone_field else ""
+                if not tone and pinyin:
+                    tone = self._derive_tone_pattern_from_pinyin(pinyin)
+                if tone:
+                    tones[word] = tone
 
         if not words:
             raise ValueError("No words found in CSV")
 
         color = self.colors[index % len(self.colors)]
-        return VocabularyList(name=path.stem, words=words, tones=tones, color=color)
+        return VocabularyList(name=path.stem, words=words, tones=tones, pinyins=pinyins, color=color)
 
     @staticmethod
-    def _match_field(fieldnames: List[str], candidates: List[str]) -> str:
+    def _match_field(
+        fieldnames: List[str], candidates: List[str], fallback_to_first: bool = True
+    ) -> Optional[str]:
         lowered = {field.lower(): field for field in fieldnames}
         for candidate in candidates:
             if candidate in lowered:
                 return lowered[candidate]
-        return fieldnames[0]
+        if fallback_to_first and fieldnames:
+            return fieldnames[0]
+        return None
+
+    @staticmethod
+    def _derive_tone_pattern_from_pinyin(pinyin: str) -> str:
+        tones = re.findall(r"[1-5]", pinyin)
+        return "-".join(tones)
+
+    @staticmethod
+    def _normalize_tone_input(value: str) -> str:
+        tones = re.findall(r"[1-5]", value)
+        return "-".join(tones)
+
+
+    def _prompt_enrich_loaded_csvs(self, paths: List[Path]) -> None:
+        should_enrich = messagebox.askyesno(
+            "Add Pinyin and Tones",
+            "Do you want to fill missing Pinyin and TonePattern values in the loaded CSV files?",
+        )
+        if not should_enrich:
+            return
+
+        converter = self._load_pypinyin_converter()
+        if converter is None:
+            messagebox.showwarning(
+                "Missing Dependency",
+                "Install pypinyin to auto-fill Pinyin and TonePattern values.",
+            )
+            return
+
+        updated_files = 0
+        total_missing_words = 0
+        for path in paths:
+            try:
+                file_updated, file_missing_words = self._enrich_csv_file(path, converter)
+                if file_updated:
+                    updated_files += 1
+                total_missing_words += file_missing_words
+            except Exception as exc:  # noqa: BLE001 - show user-facing error
+                messagebox.showwarning("CSV Enrichment Error", f"{path.name}: {exc}")
+
+        messagebox.showinfo(
+            "CSV Enrichment Summary",
+            (
+                f"Updated {updated_files} file(s). "
+                f"Words still missing Pinyin/TonePattern: {total_missing_words}."
+            ),
+        )
+
+    def _enrich_csv_file(self, path: Path, converter: dict) -> Tuple[bool, int]:
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None:
+                raise ValueError("CSV must include headers")
+            fieldnames = list(reader.fieldnames)
+            rows = list(reader)
+
+        word_field = self._match_field(
+            fieldnames, ["simplified", "word", "vocab", "character", "traditional"], True
+        )
+        if not word_field:
+            raise ValueError("Could not detect the word column")
+
+        pinyin_field = self._match_field(fieldnames, ["pinyin", "pronunciation"], False)
+        tone_field = self._match_field(
+            fieldnames, ["tonepattern", "tone_pattern", "tone", "tones"], False
+        )
+
+        if not pinyin_field:
+            pinyin_field = "Pinyin"
+            fieldnames.append(pinyin_field)
+        if not tone_field:
+            tone_field = "TonePattern"
+            fieldnames.append(tone_field)
+
+        missing_words: List[str] = []
+        for row in rows:
+            word = (row.get(word_field) or "").strip()
+            if not word:
+                continue
+            has_pinyin = bool((row.get(pinyin_field) or "").strip())
+            has_tone = bool((row.get(tone_field) or "").strip())
+            if not has_pinyin or not has_tone:
+                missing_words.append(word)
+
+        if not missing_words:
+            return False, 0
+
+        annotations, unresolved_words = self._annotate_words_with_pypinyin(missing_words, converter)
+
+        updated_any = False
+        for row in rows:
+            word = (row.get(word_field) or "").strip()
+            if not word or word not in annotations:
+                continue
+            annotation = annotations[word]
+            if not (row.get(pinyin_field) or "").strip() and annotation.get("pinyin"):
+                row[pinyin_field] = annotation["pinyin"]
+                updated_any = True
+            if not (row.get(tone_field) or "").strip() and annotation.get("tone_pattern"):
+                row[tone_field] = annotation["tone_pattern"]
+                updated_any = True
+
+        if updated_any:
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        return updated_any, len(unresolved_words)
+
+    @staticmethod
+    def _load_pypinyin_converter() -> Optional[dict]:
+        if importlib.util.find_spec("pypinyin") is None:
+            return None
+        pypinyin_module = importlib.import_module("pypinyin")
+        return {
+            "pinyin": pypinyin_module.pinyin,
+            "style": pypinyin_module.Style.TONE3,
+        }
+
+    def _annotate_words_with_pypinyin(
+        self, words: List[str], converter: dict
+    ) -> Tuple[Dict[str, Dict[str, str]], List[str]]:
+        annotations: Dict[str, Dict[str, str]] = {}
+        unresolved_words: List[str] = []
+
+        pinyin_func = converter["pinyin"]
+        tone_style = converter["style"]
+
+        for word in sorted(set(words)):
+            syllables_nested = pinyin_func(word, style=tone_style, heteronym=False, strict=False)
+            syllables = [syllable_list[0].lower() for syllable_list in syllables_nested if syllable_list]
+            numbered = [syllable for syllable in syllables if re.search(r"[1-5]", syllable)]
+            if not numbered:
+                unresolved_words.append(word)
+                continue
+            pinyin_value = " ".join(numbered)
+            tone_pattern = self._derive_tone_pattern_from_pinyin(pinyin_value)
+            tone_pattern = self._normalize_tone_input(tone_pattern)
+            if not tone_pattern:
+                unresolved_words.append(word)
+                continue
+            annotations[word] = {"pinyin": pinyin_value, "tone_pattern": tone_pattern}
+
+        return annotations, unresolved_words
 
     def _refresh_list_summary(self) -> None:
         if not self.vocab_lists:
@@ -456,20 +627,21 @@ class ChineseLearningApp(tk.Tk):
         return words
 
     def new_quiz(self) -> None:
-        tone_entries: List[Tuple[str, str]] = []
+        tone_entries: List[Tuple[str, str, str]] = []
         for vocab in self.vocab_lists:
             for word, tone in vocab.tones.items():
-                tone_entries.append((word, tone))
+                tone_entries.append((word, tone, vocab.pinyins.get(word, "")))
 
         if not tone_entries:
             messagebox.showwarning(
                 "Missing Tones",
-                "Load vocabulary CSV files with a 'tone' column to enable the quiz.",
+                "Load vocabulary CSV files with a tone column or pinyin with tone numbers "
+                "(for example niu3 qu1) to enable the quiz.",
             )
             return
 
         vocab_words = self._all_words()
-        quiz_word, quiz_tone = random.choice(tone_entries)
+        quiz_word, quiz_tone, quiz_pinyin = random.choice(tone_entries)
 
         sentence = self._generate_quiz_sentence(quiz_word, vocab_words)
         sentence = sentence.replace(quiz_word, f"【{quiz_word}】", 1)
@@ -477,20 +649,27 @@ class ChineseLearningApp(tk.Tk):
         self.quiz_sentence.config(text=sentence)
         self.current_quiz_word = quiz_word
         self.current_quiz_tone = quiz_tone
+        self.current_quiz_pinyin = quiz_pinyin
         self.quiz_feedback.config(text="")
 
     def check_answer(self) -> None:
         if not self.current_quiz_word or not self.current_quiz_tone:
             messagebox.showinfo("No Quiz", "Click 'New Quiz' to generate a question.")
             return
-        chosen = self.tone_choice.get()
-        if chosen == self.current_quiz_tone:
-            self.quiz_feedback.config(text="Correct!", foreground="#2e7d32")
+
+        chosen = self._normalize_tone_input(self.tone_choice.get())
+        expected = self._normalize_tone_input(self.current_quiz_tone)
+        pinyin_hint = f" Pinyin: {self.current_quiz_pinyin}." if self.current_quiz_pinyin else ""
+        if chosen == expected:
+            self.quiz_feedback.config(
+                text=f"Correct! {self.current_quiz_word} -> {expected}.{pinyin_hint}",
+                foreground="#2e7d32",
+            )
         else:
             self.quiz_feedback.config(
                 text=(
-                    f"Incorrect. {self.current_quiz_word} has tone "
-                    f"{self.current_quiz_tone}."
+                    f"Incorrect. {self.current_quiz_word} has tone pattern "
+                    f"{expected}.{pinyin_hint}"
                 ),
                 foreground="#c62828",
             )
